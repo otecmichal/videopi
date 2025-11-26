@@ -1,0 +1,6 @@
+# requirements.txt
+# put your stuff here
+opencv-python
+numpy
+av
+flask
