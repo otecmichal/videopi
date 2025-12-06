@@ -1,4 +1,4 @@
-## 💡 RPi Zero 2W Video Doorbell
+## 💡 RPi Zero 2W Video Doorbell with 1.44' LCD hat
 
 This project outlines a **headless video doorbell solution** designed for the **Raspberry Pi Zero 2W**. It captures existing H.264/H.265 **RTSP streams** from network cameras and displays them on a small **SPI-attached LCD screen**, offering a low-power, simple monitoring interface.
 
