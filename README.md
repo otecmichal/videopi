@@ -18,7 +18,9 @@ This project outlines a **headless video doorbell solution** designed for the **
 
 ### How to use
 
-* Execute doorbell.py after raspberry zero boots up
+* run doorbell.py after raspberry zero boots up
+* use key1 and key2 on the LCD hat to cycle feeds
+
 
 ***
 
