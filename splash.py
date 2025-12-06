@@ -3,6 +3,7 @@ import time
 from luma.core.interface.serial import spi
 from luma.core.render import canvas
 from luma.lcd.device import st7735
+import signal
 
 # --- CONFIGURATION (Must match doorbell_buttons.py) ---
 SPI_DC_PIN = 25
@@ -11,6 +12,8 @@ SPI_BL_PIN = 24
 
 LCD_WIDTH = 128
 LCD_HEIGHT = 128
+
+device = None
 
 # Suppress warnings that might appear before main script runs
 GPIO.setwarnings(False) 
@@ -58,8 +61,33 @@ def draw_splash(device):
         draw.text((10, 50), "Loading...", fill="white")
         draw.text((10, 90), "Wait for feed...", fill="gray")
 
+# --- SIGNAL HANDLER ---
+def cleanup_and_exit(signum, frame):
+    """Signal handler function to gracefully shut down the splash screen."""
+    global device
+    print(f"\n--- SIGTERM detected in splash.py. Stopping display... ---")
+    
+    if device:
+        # 1. Blank the display immediately
+        with canvas(device) as draw:
+            draw.rectangle(device.bounding_box, outline="black", fill="black")
+        
+        # 2. Turn off backlight
+        device.backlight(False)
+    
+    # Clean up GPIO (Optional, but safe)
+    try:
+        GPIO.cleanup()
+    except:
+        pass
+        
+    print("Splash cleanup complete. Exiting.")
+    # Exit the application cleanly
+    exit(0)
+
 # --- 3. MAIN EXECUTION ---
 if __name__ == "__main__":
+    signal.signal(signal.SIGTERM, cleanup_and_exit)
     device = setup_display()
     draw_splash(device)
 
