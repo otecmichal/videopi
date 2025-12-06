@@ -3,6 +3,7 @@ import json
 import cv2
 from PIL import Image
 import RPi.GPIO as GPIO 
+import signal
 
 # Luma Libraries
 from luma.core.render import canvas
@@ -13,6 +14,7 @@ from luma.lcd.device import st7735
 FEEDS_FILE = "feeds.json"
 LCD_WIDTH = 128
 LCD_HEIGHT = 128
+device = None
 
 # Waveshare 1.44" HAT Pin Defs (BCM)
 SPI_DC_PIN = 25
@@ -188,8 +190,35 @@ def run_doorbell():
              draw.rectangle(device.bounding_box, outline="black", fill="black")
              draw.text((30, 60), "Switching...", fill="yellow")
 
+def cleanup_and_exit(signum, frame):
+    """Signal handler function to gracefully shut down the display."""
+    global device
+    print(f"\n--- SIGTERM/Interrupt detected. Shutting down gracefully... ---")
+
+    if device:
+        # 1. Blank the display immediately
+        with canvas(device) as draw:
+            draw.rectangle(device.bounding_box, outline="black", fill="black")
+            draw.text((10, 60), "Display OFF", fill="red")
+
+        # 2. Turn off backlight
+        device.backlight(False)
+
+    # 3. Clean up GPIO for safety (optional, but good practice)
+    try:
+        GPIO.cleanup()
+    except:
+        pass
+
+    print("Cleanup complete. Exiting.")
+    # Exit the application cleanly
+    exit(0)
+
 if __name__ == "__main__":
     print("--- Doorbell Started (Polling Mode) ---")
+    signal.signal(signal.SIGTERM, cleanup_and_exit)
+    signal.signal(signal.SIGINT, cleanup_and_exit)
+
     try:
         run_doorbell()
     except KeyboardInterrupt:
