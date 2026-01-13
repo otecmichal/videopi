@@ -4,6 +4,11 @@ import cv2
 from PIL import Image
 import RPi.GPIO as GPIO 
 import signal
+import requests
+import os
+import datetime
+import threading
+from dotenv import load_dotenv
 
 # Luma Libraries
 from luma.core.render import canvas
@@ -16,6 +21,15 @@ LCD_WIDTH = 128
 LCD_HEIGHT = 128
 device = None
 
+# Load Environment Variables
+if os.path.exists(',env'):
+    load_dotenv(',env')
+else:
+    load_dotenv()
+
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHATID = os.getenv("TELEGRAM_CHATID")
+
 # Waveshare 1.44" HAT Pin Defs (BCM)
 SPI_DC_PIN = 25
 SPI_RST_PIN = 27
@@ -24,7 +38,7 @@ SPI_BL_PIN = 24
 # Button Pins
 KEY_NEXT_PIN = 21  # Key 1
 KEY_PREV_PIN = 20  # Key 2
-KEY_RELOAD_PIN = 16 # Key 3
+KEY_RELOAD_PIN = 16 # Key 3 (Now Snapshot)
 
 # --- GLOBAL STATE ---
 feeds = []
@@ -86,7 +100,7 @@ def load_feeds():
 
 def check_buttons():
     """
-    Checks if buttons are pressed. Returns 'next', 'prev', 'reload', or None.
+    Checks if buttons are pressed. Returns 'next', 'prev', 'snapshot', or None.
     Includes software debouncing.
     """
     global last_button_press_time, current_feed_index
@@ -111,14 +125,47 @@ def check_buttons():
         last_button_press_time = now
         
     elif GPIO.input(KEY_RELOAD_PIN) == 0:
-        print(">>> Button: RELOAD")
-        load_feeds()
-        action = 'switch'
+        print(">>> Button: SNAPSHOT")
+        action = 'snapshot'
         last_button_press_time = now
         
     return action
 
-def draw_ui(cv_frame, feed_name):
+def send_snapshot_thread(frame_bgr, feed_name):
+    """
+    Background worker to save and send the snapshot.
+    """
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHATID:
+        print("Telegram Warning: Missing credentials, cannot send snapshot.")
+        return
+
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    caption = f"Snapshot: {feed_name}\nTime: {timestamp}"
+    
+    filename = "/tmp/videopi_snapshot.jpg"
+    
+    try:
+        # Save full resolution frame
+        cv2.imwrite(filename, frame_bgr)
+        
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
+        with open(filename, 'rb') as f:
+            files = {'photo': f}
+            data = {
+                "chat_id": TELEGRAM_CHATID,
+                "caption": caption
+            }
+            print(f"Sending snapshot to Telegram ({feed_name})...")
+            response = requests.post(url, data=data, files=files)
+            if response.status_code == 200:
+                print("Snapshot sent successfully.")
+            else:
+                print(f"Failed to send snapshot: {response.text}")
+                
+    except Exception as e:
+        print(f"Error sending snapshot: {e}")
+
+def draw_ui(cv_frame, feed_name, status_text=None):
     # Black Bottom Bar
     cv2.rectangle(cv_frame, (0, 115), (128, 128), (0, 0, 0), -1)
     
@@ -126,9 +173,10 @@ def draw_ui(cv_frame, feed_name):
     disp_name = (feed_name[:12] + '..') if len(feed_name) > 12 else feed_name
     cv2.putText(cv_frame, disp_name, (2, 125), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 255, 0), 1)
     
-    # Arrows
-    #cv2.putText(cv_frame, ">", (118, 125), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (255, 255, 255), 1)
-    #cv2.putText(cv_frame, "<", (108, 125), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (255, 255, 255), 1)
+    # Optional Status Text (e.g. "SNAP!")
+    if status_text:
+         cv2.putText(cv_frame, status_text, (80, 125), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 255, 255), 1)
+
     return cv_frame
 
 # --- 4. MAIN LOOP ---
@@ -164,11 +212,14 @@ def run_doorbell():
              continue # Loop back to start (picks up new index if button pressed)
 
         # --- STREAM PHASE ---
+        snapshot_feedback_timer = 0
+        
         while True:
             # 1. Check Buttons
-            if check_buttons() == 'switch':
+            btn_action = check_buttons()
+            if btn_action == 'switch':
                 break # Break inner loop -> Re-connect to new feed
-
+            
             # 2. Read Frame
             ret, frame = cap.read()
             
@@ -176,10 +227,23 @@ def run_doorbell():
                 print("Stream ended or dropped.")
                 break 
             
+            # Handle Snapshot
+            if btn_action == 'snapshot':
+                # Launch thread to avoid freezing the stream
+                t = threading.Thread(target=send_snapshot_thread, args=(frame.copy(), name))
+                t.start()
+                snapshot_feedback_timer = time.time() # Start showing feedback
+
             # 3. Process & Display
-            frame = cv2.resize(frame, (LCD_WIDTH, LCD_HEIGHT), interpolation=cv2.INTER_LINEAR)
-            frame = draw_ui(frame, name)
-            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            frame_resized = cv2.resize(frame, (LCD_WIDTH, LCD_HEIGHT), interpolation=cv2.INTER_LINEAR)
+            
+            # Determine feedback text
+            status = None
+            if time.time() - snapshot_feedback_timer < 1.0: # Show for 1 second
+                status = "SNAP!"
+                
+            frame_resized = draw_ui(frame_resized, name, status)
+            frame_rgb = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2RGB)
             device.display(Image.fromarray(frame_rgb))
             
         cap.release()
