@@ -8,3 +8,5 @@ RPi.GPIO
 Pillow
 luma.lcd
 spidev
+requests
+python-dotenv
